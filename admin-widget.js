@@ -617,7 +617,7 @@
                 })
                 .catch(function() {});
         }
-    }, 20000);
+    }, 5000);
 
     fetchSessions();
 })();
