@@ -208,7 +208,7 @@
                 display: flex;
             }
             
-            .rr-message.user {
+            .rr-message.customer {
                 justify-content: flex-start;
             }
             
@@ -224,7 +224,7 @@
                 line-height: 1.4;
             }
             
-            .rr-message.user .rr-message-bubble {
+            .rr-message.customer .rr-message-bubble {
                 background: white;
                 color: #1f2937;
                 box-shadow: 0 1px 2px rgba(0,0,0,0.05);
@@ -379,13 +379,20 @@
     });
 
     function fetchSessions() {
-        fetch(webhookUrl + '?action=fetch-sessions&userId=' + userId)
+        fetch(webhookUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: 'fetch-sessions',
+                userId: userId
+            })
+        })
             .then(function(response) { return response.json(); })
             .then(function(data) {
                 if (data.sessions) {
                     var oldCount = activeSessions;
                     sessions = data.sessions;
-                    activeSessions = sessions.filter(function(s) { return s.status === 'active'; }).length;
+                    activeSessions = sessions.length;
                     
                     if (activeSessions > oldCount && oldCount > 0) {
                         playNotification();
@@ -435,21 +442,26 @@
         }
         
         sessions.forEach(function(session) {
+            // Initialize messages array if it doesn't exist
+            if (!session.messages) {
+                session.messages = [];
+            }
+            
             var div = document.createElement('div');
             div.className = 'rr-session-item';
             if (selectedSession && selectedSession.sessionId === session.sessionId) {
                 div.className += ' active';
             }
             
-            var statusClass = session.status === 'active' ? 'rr-status-active' : '';
+            var statusClass = session.status === 'open' ? 'rr-status-active' : '';
             
             div.innerHTML = `
                 <div class="rr-session-name">${session.clientName || 'Unknown Client'}</div>
                 <div class="rr-session-email">${session.clientEmail || 'No email'}</div>
                 <div class="rr-session-phone">${session.clientPhone || 'No phone'}</div>
                 <div class="rr-session-meta">
-                    <span class="rr-status-badge ${statusClass}">${session.status}</span>
-                    <span>${session.messages ? session.messages.length : 0} messages</span>
+                    <span class="rr-status-badge ${statusClass}">${session.status || 'open'}</span>
+                    <span>${session.messages.length} messages</span>
                 </div>
             `;
             
@@ -463,6 +475,9 @@
 
     function selectSession(session) {
         selectedSession = session;
+        if (!selectedSession.messages) {
+            selectedSession.messages = [];
+        }
         renderSessions();
         renderChat();
     }
@@ -503,7 +518,7 @@
         if (selectedSession.messages && selectedSession.messages.length > 0) {
             selectedSession.messages.forEach(function(msg) {
                 var msgDiv = document.createElement('div');
-                msgDiv.className = 'rr-message ' + msg.sender;
+                msgDiv.className = 'rr-message ' + (msg.sender || 'customer');
                 
                 var label = msg.sender === 'agent' ? 'YOU' : msg.sender === 'bot' ? 'BOT' : 'CUSTOMER';
                 
@@ -544,15 +559,23 @@
                     message: newMessage
                 })
             })
-            .then(function(response) { return response.json(); })
+            .then(function(response) { 
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.json(); 
+            })
             .then(function(data) {
+                if (!selectedSession.messages) {
+                    selectedSession.messages = [];
+                }
                 selectedSession.messages.push(newMessage);
                 input.value = '';
                 renderChat();
             })
             .catch(function(error) {
                 console.error('Error sending message:', error);
-                alert('Failed to send message');
+                alert('Failed to send message. Please try again.');
             })
             .finally(function() {
                 sendBtn.disabled = false;
@@ -596,28 +619,9 @@
         return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
     }
 
-    pollInterval = setInterval(function() {
-        if (adminPanel.classList.contains('open')) {
-            fetchSessions();
-        } else {
-            fetch(webhookUrl + '?action=fetch-sessions&userId=' + userId)
-                .then(function(response) { return response.json(); })
-                .then(function(data) {
-                    if (data.sessions) {
-                        var oldCount = activeSessions;
-                        sessions = data.sessions;
-                        activeSessions = sessions.filter(function(s) { return s.status === 'active'; }).length;
-                        
-                        if (activeSessions > oldCount) {
-                            playNotification();
-                        }
-                        
-                        updateBadge();
-                    }
-                })
-                .catch(function() {});
-        }
-    }, 5000);
-
+    // Start polling every 5 seconds
+    pollInterval = setInterval(fetchSessions, 12000);
+    
+    // Initial fetch
     fetchSessions();
 })();
