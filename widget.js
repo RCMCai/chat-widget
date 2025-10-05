@@ -1,4 +1,4 @@
-// Rapid Reply Chat Widget - Supabase Realtime Version
+// Rapid Reply Chat Widget - Fixed Version
 (function() {
     'use strict';
 
@@ -10,396 +10,19 @@
     var companyInitials = config.companyInitials || 'RR';
     var companyName = config.companyName || 'Support';
 
-    console.log('Widget initialized with userId:', userId);
-    console.log('Config:', config);
-
-    // Supabase config
-    var SUPABASE_URL = 'https://vwlqgwavzdohqkfaxgpt.supabase.co';
-    var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ3bHFnd2F2emRvaHFrZmF4Z3B0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTE3ODQ3MjksImV4cCI6MjA2NzM2MDcyOX0.LfAbG47R8ohZApapG2HUxprqA-vj3wZeovl7mIv1O_I';
-
     var SESSION_STORAGE_KEY = 'chatSessionId';
-    var AGENT_MODE_KEY = 'chatAgentMode';
     var sessionId = null;
     var isTyping = false;
     var isAgentMode = false;
+    var pollInterval = null;
     var conversationHistory = [];
     var clientEmail = '';
     var clientPhone = '';
     var clientName = '';
     var businessHours = null;
     var canTransferToAgent = false;
-    var realtimeChannel = null;
-
-    // Load Supabase dynamically
-    var script = document.createElement('script');
-    script.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
-    script.onload = function() {
-        if (typeof supabase !== 'undefined') {
-            window.supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-            console.log('Supabase loaded successfully');
-        }
-    };
-    document.head.appendChild(script);
-    // Wait helper to ensure Supabase client is ready before subscribing
-    function waitForSupabaseAnd(fn) {
-        if (window.supabaseClient) { try { fn(); } catch(e){ console.error(e);} return; }
-        setTimeout(function(){ waitForSupabaseAnd(fn); }, 100);
-    }
-
 
     var html = `
-        <style>
-            * {
-                box-sizing: border-box;
-            }
-
-            #rr-chat-button {
-                position: fixed;
-                bottom: 20px;
-                right: 20px;
-                width: 60px;
-                height: 60px;
-                border-radius: 50%;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                border: none;
-                cursor: pointer;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                z-index: 999999;
-                transition: transform 0.2s;
-            }
-
-            #rr-chat-button:hover {
-                transform: scale(1.1);
-            }
-
-            #rr-chat-button svg {
-                width: 28px;
-                height: 28px;
-                fill: white;
-            }
-
-            #rr-chat-button img {
-                width: 100%;
-                height: 100%;
-                border-radius: 50%;
-            }
-
-            #rr-chat-widget {
-                position: fixed;
-                bottom: 90px;
-                right: 20px;
-                width: 400px;
-                height: 650px;
-                background: white;
-                border-radius: 12px;
-                box-shadow: 0 8px 32px rgba(0,0,0,0.2);
-                display: none;
-                flex-direction: column;
-                z-index: 999998;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', sans-serif;
-            }
-
-            #rr-chat-widget.rr-open {
-                display: flex;
-            }
-
-            .rr-chat-header {
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                color: white;
-                border-radius: 12px 12px 0 0;
-            }
-
-            .rr-chat-header-top {
-                padding: 16px 20px;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-            }
-
-            .rr-chat-header-title {
-                display: flex;
-                align-items: center;
-                gap: 12px;
-            }
-
-            .rr-chat-avatar {
-                width: 40px;
-                height: 40px;
-                border-radius: 50%;
-                background: rgba(255,255,255,0.2);
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                font-weight: bold;
-                font-size: 16px;
-            }
-
-            .rr-chat-avatar img {
-                width: 100%;
-                height: 100%;
-                border-radius: 50%;
-            }
-
-            .rr-chat-header-text h3 {
-                margin: 0;
-                font-size: 16px;
-                font-weight: 600;
-            }
-
-            .rr-chat-header-text p {
-                margin: 4px 0 0 0;
-                font-size: 12px;
-                opacity: 0.9;
-            }
-
-            .rr-status-dot {
-                display: inline-block;
-                width: 8px;
-                height: 8px;
-                border-radius: 50%;
-                background: #10b981;
-                margin-right: 6px;
-            }
-
-            .rr-close-button {
-                background: none;
-                border: none;
-                color: white;
-                font-size: 24px;
-                cursor: pointer;
-                padding: 0;
-                width: 30px;
-                height: 30px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-            }
-
-            .rr-contact-form {
-                padding: 30px;
-                display: flex;
-                flex-direction: column;
-                overflow-y: auto;
-                max-height: calc(100% - 80px);
-            }
-
-            .rr-contact-form h4 {
-                margin: 0 0 8px 0;
-                font-size: 20px;
-                color: #1f2937;
-            }
-
-            .rr-contact-form > div:first-child p {
-                margin: 0 0 24px 0;
-                color: #6b7280;
-                font-size: 14px;
-            }
-
-            .rr-form-group {
-                margin-bottom: 16px;
-            }
-
-            .rr-form-group label {
-                display: block;
-                margin-bottom: 6px;
-                font-size: 14px;
-                font-weight: 500;
-                color: #374151;
-            }
-
-            .rr-form-group input {
-                width: 100%;
-                padding: 10px 14px;
-                border: 1px solid #d1d5db;
-                border-radius: 8px;
-                font-size: 14px;
-                outline: none;
-                transition: border-color 0.2s;
-            }
-
-            .rr-form-group input:focus {
-                border-color: #667eea;
-                box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-            }
-
-            .rr-error-message {
-                color: #ef4444;
-                font-size: 13px;
-                margin: 8px 0;
-                min-height: 20px;
-            }
-
-            .rr-contact-form button {
-                width: 100%;
-                padding: 12px;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                color: white;
-                border: none;
-                border-radius: 8px;
-                font-size: 15px;
-                font-weight: 600;
-                cursor: pointer;
-                transition: transform 0.2s;
-                margin-top: 8px;
-            }
-
-            .rr-contact-form button:hover {
-                transform: translateY(-1px);
-            }
-
-            .rr-contact-form button:disabled {
-                opacity: 0.6;
-                cursor: not-allowed;
-            }
-
-            .rr-chat-messages {
-                flex: 1;
-                overflow-y: auto;
-                padding: 20px;
-                background: #f9fafb;
-                display: none;
-            }
-
-            .rr-message {
-                margin-bottom: 16px;
-                display: flex;
-            }
-
-            .rr-message.rr-user {
-                justify-content: flex-end;
-            }
-
-            .rr-message.rr-bot, .rr-message.rr-agent {
-                justify-content: flex-start;
-            }
-
-            .rr-message > div {
-                max-width: 70%;
-                padding: 10px 14px;
-                border-radius: 12px;
-                font-size: 14px;
-                line-height: 1.4;
-            }
-
-            .rr-message.rr-user > div {
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                color: white;
-                border-radius: 12px 12px 0 12px;
-            }
-
-            .rr-message.rr-bot > div {
-                background: white;
-                color: #1f2937;
-                box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-                border-radius: 12px 12px 12px 0;
-            }
-
-            .rr-message.rr-agent > div {
-                background: #dbeafe;
-                color: #1e40af;
-                border-radius: 12px 12px 12px 0;
-            }
-
-            .rr-typing-indicator {
-                display: flex;
-                gap: 4px;
-                padding: 8px;
-            }
-
-            .rr-typing-indicator span {
-                width: 8px;
-                height: 8px;
-                border-radius: 50%;
-                background: #9ca3af;
-                animation: typing 1.4s infinite;
-            }
-
-            .rr-typing-indicator span:nth-child(2) {
-                animation-delay: 0.2s;
-            }
-
-            .rr-typing-indicator span:nth-child(3) {
-                animation-delay: 0.4s;
-            }
-
-            @keyframes typing {
-                0%, 60%, 100% { transform: translateY(0); }
-                30% { transform: translateY(-8px); }
-            }
-
-            .rr-chat-input {
-                padding: 16px 20px;
-                border-top: 1px solid #e5e7eb;
-                background: white;
-                border-radius: 0 0 12px 12px;
-                display: none;
-            }
-
-            .rr-input-wrapper {
-                display: flex;
-                gap: 8px;
-            }
-
-            .rr-input-wrapper input {
-                flex: 1;
-                padding: 10px 14px;
-                border: 1px solid #d1d5db;
-                border-radius: 8px;
-                font-size: 14px;
-                outline: none;
-            }
-
-            .rr-input-wrapper input:focus {
-                border-color: #667eea;
-                box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-            }
-
-            .rr-send-button {
-                padding: 10px 16px;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                border: none;
-                border-radius: 8px;
-                cursor: pointer;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-            }
-
-            .rr-send-button:disabled {
-                opacity: 0.5;
-                cursor: not-allowed;
-            }
-
-            .rr-send-button svg {
-                width: 20px;
-                height: 20px;
-                fill: white;
-            }
-
-            #rr-agent-banner {
-                display: none;
-                background: #fef3c7;
-                border-bottom: 1px solid #fbbf24;
-                padding: 10px;
-                text-align: center;
-                font-size: 13px;
-                color: #92400e;
-            }
-
-            @media (max-width: 480px) {
-                #rr-chat-widget {
-                    width: 100%;
-                    height: 100%;
-                    bottom: 0;
-                    right: 0;
-                    border-radius: 0;
-                }
-            }
-        </style>
-
         <button id="rr-chat-button" aria-label="Open chat">
             <svg viewBox="0 0 24 24" id="rr-default-icon">
                 <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
@@ -446,11 +69,16 @@
                 <button id="rr-start-chat">Start Conversation</button>
             </div>
 
-            <div id="rr-agent-banner"></div>
+            <div id="rr-agent-banner" style="display: none; background: #fef3c7; border-top: 2px solid #fbbf24; padding: 10px; text-align: center; font-size: 13px; color: #92400e;">
+                Connecting you to a live agent...
+            </div>
 
-            <div class="rr-chat-messages" id="rr-chat-messages"></div>
+            <div class="rr-chat-messages" id="rr-chat-messages" style="display: none;"></div>
             
-            <div class="rr-chat-input" id="rr-chat-input">
+            <div class="rr-chat-input" id="rr-chat-input" style="display: none;">
+                <button id="rr-request-agent" class="rr-agent-button" style="display: none; width: 100%; padding: 10px; margin-bottom: 10px; background: white; color: #3b82f6; border: 2px solid #3b82f6; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 14px;">
+                    Talk to Live Agent
+                </button>
                 <div class="rr-input-wrapper">
                     <input type="text" id="rr-message-input" placeholder="Type your message...">
                     <button class="rr-send-button" id="rr-send-button" aria-label="Send message">
@@ -478,6 +106,7 @@
     var chatInput = document.getElementById('rr-chat-input');
     var messageInput = document.getElementById('rr-message-input');
     var sendButton = document.getElementById('rr-send-button');
+    var requestAgentBtn = document.getElementById('rr-request-agent');
     var agentBanner = document.getElementById('rr-agent-banner');
     var chatStatus = document.getElementById('rr-chat-status');
 
@@ -502,8 +131,6 @@
         var savedSessionId = sessionStorage.getItem(SESSION_STORAGE_KEY);
         if (savedSessionId) {
             sessionId = savedSessionId;
-            var wasAgent = false; try { wasAgent = sessionStorage.getItem(AGENT_MODE_KEY) === '1'; } catch(e) {}
-            if (wasAgent) { agentBanner.style.display='block'; agentBanner.textContent='Reconnecting to live agent...'; chatStatus.innerHTML='<span class="rr-status-dot" style="background: #fbbf24;"></span>Connecting to agent...'; waitForSupabaseAnd(function(){ subscribeToAgentMessages(); }); }
             showChatInterface();
         }
     });
@@ -511,7 +138,7 @@
     closeChat.addEventListener('click', function() {
         chatWidget.classList.remove('rr-open');
         chatButton.style.display = 'flex';
-        stopRealtimeSubscription();
+        stopPolling();
     });
 
     function validateEmail(email) {
@@ -538,6 +165,23 @@
         var endMinutes = parseInt(endParts[0]) * 60 + parseInt(endParts[1]);
         
         return currentTime >= startMinutes && currentTime <= endMinutes;
+    }
+
+    function getBusinessHoursMessage() {
+        if (!businessHours) return '';
+        
+        var message = 'Our support hours are: ';
+        var days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+        var hours = [];
+        
+        days.forEach(function(day) {
+            var dayHours = businessHours[day];
+            if (dayHours && !dayHours.closed) {
+                hours.push(day.charAt(0).toUpperCase() + day.slice(1) + ': ' + dayHours.start + ' - ' + dayHours.end);
+            }
+        });
+        
+        return message + hours.join(', ');
     }
 
     startChatBtn.addEventListener('click', function() {
@@ -581,12 +225,7 @@
                 timestamp: Date.now()
             })
         })
-        .then(function(response) {
-            if (!response.ok) {
-                throw new Error('Server responded with ' + response.status);
-            }
-            return response.json();
-        })
+        .then(function(response) { return response.json(); })
         .then(function(data) {
             if (data.sessionId) {
                 sessionId = data.sessionId;
@@ -616,7 +255,7 @@
 
     function showChatInterface() {
         contactForm.style.display = 'none';
-        chatMessages.style.display = 'block';
+        chatMessages.style.display = 'flex';
         chatInput.style.display = 'block';
         messageInput.focus();
     }
@@ -626,22 +265,17 @@
         messageDiv.className = 'rr-message rr-' + sender;
         
         if (sender === 'agent') {
-            var labelDiv = document.createElement('div');
-            labelDiv.style.fontSize = '10px';
-            labelDiv.style.fontWeight = 'bold';
-            labelDiv.style.marginBottom = '4px';
-            labelDiv.style.opacity = '0.9';
-            labelDiv.textContent = 'LIVE AGENT';
-            
-            var contentDiv = document.createElement('div');
-            contentDiv.appendChild(labelDiv);
-            contentDiv.appendChild(document.createTextNode(text));
-            messageDiv.appendChild(contentDiv);
-        } else {
-            var textDiv = document.createElement('div');
-            textDiv.textContent = text;
-            messageDiv.appendChild(textDiv);
+            var agentLabel = document.createElement('div');
+            agentLabel.style.fontSize = '10px';
+            agentLabel.style.fontWeight = 'bold';
+            agentLabel.style.marginBottom = '4px';
+            agentLabel.style.opacity = '0.9';
+            agentLabel.textContent = 'LIVE AGENT';
+            messageDiv.appendChild(agentLabel);
         }
+        
+        var textNode = document.createTextNode(text);
+        messageDiv.appendChild(textNode);
         
         chatMessages.appendChild(messageDiv);
         chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -680,101 +314,96 @@
         sendButton.disabled = true;
         messageInput.disabled = true;
 
-        if (isAgentMode) {
-            if (!window.supabaseClient) {
-                console.error('Supabase not loaded');
-                sendButton.disabled = false;
-                messageInput.disabled = false;
-                return;
-            }
-
-            window.supabaseClient
-                .from('messagesrr')
-                .insert({
-                    userid: userId,
-                    sessionid: sessionId,
-                    sender: 'customer',
-                    text: message,
-                    timestamp: new Date().toISOString(),
-                    read: false
-                })
-                .then(function() {
-                    sendButton.disabled = false;
-                    messageInput.disabled = false;
-                    messageInput.focus();
-                })
-                .catch(function(error) {
-                    console.error('Error sending message:', error);
-                    sendButton.disabled = false;
-                    messageInput.disabled = false;
-                });
-        } else {
+        if (!isAgentMode) {
             showTyping();
-            
-            fetch(webhookUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    action: 'message',
-                    sessionId: sessionId,
-                    message: message,
-                    userId: userId,
-                    agentMode: false,
-                    clientName: clientName,
-                    clientEmail: clientEmail,
-                    clientPhone: clientPhone,
-                    timestamp: Date.now()
-                })
-            })
-            .then(function(response) { return response.json(); })
-            .then(function(data) {
-                hideTyping();
-                
-                if (data.reply) {
-                    addMessage(data.reply, 'bot');
-                }
-                
-                if (data.triggerHandoff === true) {
-                    if (canTransferToAgent) {
-                        requestLiveAgent();
-                    }
-                }
-            })
-            .catch(function(error) {
-                console.error('Error:', error);
-                hideTyping();
-                addMessage('Sorry, something went wrong. Please try again.', 'bot');
-            })
-            .finally(function() {
-                sendButton.disabled = false;
-                messageInput.disabled = false;
-                messageInput.focus();
-            });
         }
+
+        fetch(webhookUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: 'message',
+                sessionId: sessionId,
+                message: message,
+                userId: userId,
+                agentMode: isAgentMode,
+                clientName: clientName,
+                clientEmail: clientEmail,
+                clientPhone: clientPhone,
+                timestamp: Date.now()
+            })
+        })
+        .then(function(response) { return response.json(); })
+        .then(function(data) {
+            hideTyping();
+            
+            console.log("=== RECEIVED FROM N8N ===");
+            console.log("Full data:", data);
+            console.log("data.reply:", data.reply);
+            console.log("data.triggerHandoff:", data.triggerHandoff);
+            console.log("typeof triggerHandoff:", typeof data.triggerHandoff);
+            console.log("isAgentMode:", isAgentMode);
+            console.log("canTransferToAgent:", canTransferToAgent);
+            
+            if (!isAgentMode && data.reply) {
+                addMessage(data.reply, 'bot');
+                
+                console.log("Checking if triggerHandoff === true...");
+                if (data.triggerHandoff === true) {
+                    console.log("✅ HANDOFF TRIGGERED!");
+                    if (canTransferToAgent) {
+                        console.log("✅ Calling requestLiveAgent()");
+                        requestLiveAgent();
+                    } else {
+                        console.log("❌ Cannot transfer - outside business hours");
+                        var hoursMsg = getBusinessHoursMessage();
+                        addMessage("I'd be happy to connect you with a live agent, but our support team is currently offline. " + hoursMsg, 'bot');
+                    }
+                } else {
+                    console.log("❌ triggerHandoff is NOT true. Value:", data.triggerHandoff);
+                }
+            } else {
+                console.log("Skipped - isAgentMode:", isAgentMode, "has reply:", !!data.reply);
+            }
+        })
+        .catch(function(error) {
+            console.error('Error:', error);
+            hideTyping();
+            if (!isAgentMode) {
+                addMessage('Sorry, something went wrong. Please try again.', 'bot');
+            }
+        })
+        .finally(function() {
+            sendButton.disabled = false;
+            messageInput.disabled = false;
+            messageInput.focus();
+        });
     }
 
     function requestLiveAgent() {
-        if (isAgentMode) return;
+        console.log("=== INSIDE requestLiveAgent() ===");
         
-        if (!canTransferToAgent) {
+        if (isAgentMode) {
+            console.log("Already in agent mode, returning");
             return;
         }
         
-        console.log('=== HANDOFF DEBUG ===');
-        console.log('userId:', userId);
-        console.log('sessionId:', sessionId);
-        console.log('clientName:', clientName);
-        console.log('clientEmail:', clientEmail);
-        console.log('clientPhone:', clientPhone);
-        console.log('conversationHistory length:', conversationHistory.length);
+        if (!canTransferToAgent) {
+            console.log("Cannot transfer - outside business hours");
+            var hoursMsg = getBusinessHoursMessage();
+            addMessage("Our support team is currently offline. " + hoursMsg + " Please try again during business hours!", 'bot');
+            return;
+        }
         
+        console.log("Setting isAgentMode = true");
         isAgentMode = true;
-        try{ sessionStorage.setItem(AGENT_MODE_KEY, '1'); }catch(e){}
         agentBanner.style.display = 'block';
-        agentBanner.textContent = 'Connecting you to a live agent...';
         chatStatus.innerHTML = '<span class="rr-status-dot" style="background: #fbbf24;"></span>Connecting to agent...';
+        requestAgentBtn.disabled = true;
+        requestAgentBtn.style.display = 'none';
 
-        var payload = {
+        console.log("Sending handoff request to n8n...");
+        console.log("Request payload:", {
             action: 'handoff',
             userId: userId,
             sessionId: sessionId,
@@ -784,23 +413,31 @@
             conversationHistory: conversationHistory,
             timestamp: Date.now(),
             status: 'open'
-        };
-        
-        console.log('Sending payload:', JSON.stringify(payload, null, 2));
+        });
 
         fetch(webhookUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            body: JSON.stringify({
+                action: 'handoff',
+                userId: userId,
+                sessionId: sessionId,
+                clientName: clientName,
+                clientEmail: clientEmail,
+                clientPhone: clientPhone,
+                conversationHistory: conversationHistory,
+                timestamp: Date.now(),
+                status: 'open'
+            })
         })
-        .then(function(response) {
-            console.log('Handoff response status:', response.status);
-            return response.json();
+        .then(function(response) { 
+            console.log("Handoff response status:", response.status);
+            return response.json(); 
         })
         .then(function(data) {
-            console.log('Handoff response data:', data);
+            console.log("Handoff response data:", data);
             addMessage('An agent will be with you shortly...', 'bot');
-            waitForSupabaseAnd(function(){ subscribeToAgentMessages(); });
+            startPollingForAgentMessages();
         })
         .catch(function(error) {
             console.error('Error requesting agent:', error);
@@ -811,45 +448,59 @@
         });
     }
 
-    function subscribeToAgentMessages() {
-        if (realtimeChannel) return;
-        if (!window.supabaseClient) { setTimeout(subscribeToAgentMessages, 150); return; }
-
-        console.log('Subscribing to agent messages for session:', sessionId);
-
-        realtimeChannel = window.supabaseClient
-            .channel('agent-messages-' + sessionId)
-            .on(
-                'postgres_changes',
-                {
-                    event: 'INSERT',
-                    schema: 'public',
-                    table: 'messagesrr',
-                    filter: 'sessionid=eq.' + sessionId
-                },
-                function(payload) {
-                    console.log('Received message:', payload);
-                    var msg = payload.new;
-                    if (msg.sender === 'agent') {
-                        addMessage(msg.text, 'agent');
-                        
-                        if (chatStatus.textContent.includes('Connecting')) {
-                            chatStatus.innerHTML = '<span class="rr-status-dot" style="background: #10b981;"></span>Live Agent';
-                            agentBanner.textContent = 'Connected to live agent';
-                            agentBanner.style.background = '#d1fae5';
-                            agentBanner.style.borderColor = '#10b981';
-                            agentBanner.style.color = '#065f46';
-                        }
+    function startPollingForAgentMessages() {
+        if (pollInterval) return;
+        
+        pollInterval = setInterval(function() {
+            fetch(webhookUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'poll',
+                    userId: userId,
+                    sessionId: sessionId
+                })
+            })
+                .then(function(response) { return response.json(); })
+                .then(function(data) {
+                    if (data.messages && Array.isArray(data.messages)) {
+                        data.messages.forEach(function(msg) {
+                            var exists = conversationHistory.find(function(m) {
+                                return m.timestamp === msg.timestamp;
+                            });
+                            
+                            if (!exists && msg.sender === 'agent') {
+                                addMessage(msg.text, 'agent');
+                                
+                                if (chatStatus.textContent.includes('Connecting')) {
+                                    chatStatus.innerHTML = '<span class="rr-status-dot" style="background: #10b981;"></span>Live Agent';
+                                    agentBanner.innerHTML = 'Connected to live agent';
+                                    agentBanner.style.background = '#d1fae5';
+                                    agentBanner.style.borderColor = '#10b981';
+                                    agentBanner.style.color = '#065f46';
+                                }
+                            }
+                        });
                     }
-                }
-            )
-            .subscribe();
+                    
+                    if (data.status === 'closed') {
+                        stopPolling();
+                        addMessage('This session has been closed. Thank you!', 'bot');
+                        isAgentMode = false;
+                        agentBanner.style.display = 'none';
+                        chatStatus.innerHTML = '<span class="rr-status-dot"></span>Online now';
+                    }
+                })
+                .catch(function(error) {
+                    console.error('Error polling for messages:', error);
+                });
+        }, 12000);
     }
 
-    function stopRealtimeSubscription() {
-        if (realtimeChannel) {
-            realtimeChannel.unsubscribe();
-            realtimeChannel = null;
+    function stopPolling() {
+        if (pollInterval) {
+            clearInterval(pollInterval);
+            pollInterval = null;
         }
     }
 
@@ -857,4 +508,5 @@
     messageInput.addEventListener('keypress', function(e) {
         if (e.key === 'Enter') sendMessage();
     });
+    requestAgentBtn.addEventListener('click', requestLiveAgent);
 })();
