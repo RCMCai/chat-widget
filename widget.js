@@ -10,6 +10,9 @@
     var companyInitials = config.companyInitials || 'RR';
     var companyName = config.companyName || 'Support';
 
+    console.log('Widget initialized with userId:', userId);
+    console.log('Config:', config);
+
     // Supabase config
     var SUPABASE_URL = 'https://vwlqgwavzdohqkfaxgpt.supabase.co';
     var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ3bHFnd2F2emRvaHFrZmF4Z3B0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTE3ODQ3MjksImV4cCI6MjA2NzM2MDcyOX0.LfAbG47R8ohZApapG2HUxprqA-vj3wZeovl7mIv1O_I';
@@ -25,15 +28,14 @@
     var businessHours = null;
     var canTransferToAgent = false;
     var realtimeChannel = null;
-    var supabaseLoaded = false;
 
     // Load Supabase dynamically
     var script = document.createElement('script');
     script.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
     script.onload = function() {
-        supabaseLoaded = true;
         if (typeof supabase !== 'undefined') {
             window.supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+            console.log('Supabase loaded successfully');
         }
     };
     document.head.appendChild(script);
@@ -670,7 +672,6 @@
         messageInput.disabled = true;
 
         if (isAgentMode) {
-            // Agent mode - write directly to Supabase
             if (!window.supabaseClient) {
                 console.error('Supabase not loaded');
                 sendButton.disabled = false;
@@ -699,7 +700,6 @@
                     messageInput.disabled = false;
                 });
         } else {
-            // AI mode - send to n8n
             showTyping();
             
             fetch(webhookUrl, {
@@ -725,7 +725,6 @@
                     addMessage(data.reply, 'bot');
                 }
                 
-                // Check if AI triggered handoff
                 if (data.triggerHandoff === true) {
                     if (canTransferToAgent) {
                         requestLiveAgent();
@@ -752,29 +751,44 @@
             return;
         }
         
+        console.log('=== HANDOFF DEBUG ===');
+        console.log('userId:', userId);
+        console.log('sessionId:', sessionId);
+        console.log('clientName:', clientName);
+        console.log('clientEmail:', clientEmail);
+        console.log('clientPhone:', clientPhone);
+        console.log('conversationHistory length:', conversationHistory.length);
+        
         isAgentMode = true;
         agentBanner.style.display = 'block';
         agentBanner.textContent = 'Connecting you to a live agent...';
         chatStatus.innerHTML = '<span class="rr-status-dot" style="background: #fbbf24;"></span>Connecting to agent...';
 
-        // Call n8n handoff
+        var payload = {
+            action: 'handoff',
+            userId: userId,
+            sessionId: sessionId,
+            clientName: clientName,
+            clientEmail: clientEmail,
+            clientPhone: clientPhone,
+            conversationHistory: conversationHistory,
+            timestamp: Date.now(),
+            status: 'open'
+        };
+        
+        console.log('Sending payload:', JSON.stringify(payload, null, 2));
+
         fetch(webhookUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                action: 'handoff',
-                userId: userId,
-                sessionId: sessionId,
-                clientName: clientName,
-                clientEmail: clientEmail,
-                clientPhone: clientPhone,
-                conversationHistory: conversationHistory,
-                timestamp: Date.now(),
-                status: 'open'
-            })
+            body: JSON.stringify(payload)
         })
-        .then(function(response) { return response.json(); })
+        .then(function(response) {
+            console.log('Handoff response status:', response.status);
+            return response.json();
+        })
         .then(function(data) {
+            console.log('Handoff response data:', data);
             addMessage('An agent will be with you shortly...', 'bot');
             subscribeToAgentMessages();
         })
@@ -790,6 +804,8 @@
     function subscribeToAgentMessages() {
         if (!window.supabaseClient || realtimeChannel) return;
 
+        console.log('Subscribing to agent messages for session:', sessionId);
+
         realtimeChannel = window.supabaseClient
             .channel('agent-messages-' + sessionId)
             .on(
@@ -801,6 +817,7 @@
                     filter: 'sessionid=eq.' + sessionId
                 },
                 function(payload) {
+                    console.log('Received message:', payload);
                     var msg = payload.new;
                     if (msg.sender === 'agent') {
                         addMessage(msg.text, 'agent');
