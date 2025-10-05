@@ -40,10 +40,9 @@
         }
     };
     document.head.appendChild(script);
-
-    // Retry helper to wait for Supabase before subscribing
+    // Wait helper to ensure Supabase client is ready before subscribing
     function waitForSupabaseAnd(fn) {
-        if (window.supabaseClient) { try { fn(); } catch(e) { console.error(e); } return; }
+        if (window.supabaseClient) { try { fn(); } catch(e){ console.error(e);} return; }
         setTimeout(function(){ waitForSupabaseAnd(fn); }, 100);
     }
 
@@ -503,11 +502,9 @@
         var savedSessionId = sessionStorage.getItem(SESSION_STORAGE_KEY);
         if (savedSessionId) {
             sessionId = savedSessionId;
+            var wasAgent = false; try { wasAgent = sessionStorage.getItem(AGENT_MODE_KEY) === '1'; } catch(e) {}
+            if (wasAgent) { agentBanner.style.display='block'; agentBanner.textContent='Reconnecting to live agent...'; chatStatus.innerHTML='<span class="rr-status-dot" style="background: #fbbf24;"></span>Connecting to agent...'; waitForSupabaseAnd(function(){ subscribeToAgentMessages(); }); }
             showChatInterface();
-            var wasAgent = sessionStorage.getItem(AGENT_MODE_KEY) === '1';
-            if (wasAgent) {
-                waitForSupabaseAnd(function(){ subscribeToAgentMessages(); });
-            }
         }
     });
 
@@ -772,7 +769,7 @@
         console.log('conversationHistory length:', conversationHistory.length);
         
         isAgentMode = true;
-        try { sessionStorage.setItem(AGENT_MODE_KEY, '1'); } catch(e) {}
+        try{ sessionStorage.setItem(AGENT_MODE_KEY, '1'); }catch(e){}
         agentBanner.style.display = 'block';
         agentBanner.textContent = 'Connecting you to a live agent...';
         chatStatus.innerHTML = '<span class="rr-status-dot" style="background: #fbbf24;"></span>Connecting to agent...';
@@ -816,7 +813,7 @@
 
     function subscribeToAgentMessages() {
         if (realtimeChannel) return;
-        if (!window.supabaseClient) { setTimeout(subscribeToAgentMessages, 100); return; }
+        if (!window.supabaseClient) { setTimeout(subscribeToAgentMessages, 150); return; }
 
         console.log('Subscribing to agent messages for session:', sessionId);
 
