@@ -70,7 +70,8 @@
     bottom: 90px;
     right: 24px;
     width: 380px;
-    height: 550px;
+    height: 600px;
+    max-height: calc(100vh - 120px);
     background: var(--rr-bg-color);
     border-radius: 20px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
@@ -102,6 +103,7 @@
     background: var(--rr-bg-color);
     padding: 24px 24px 20px 24px;
     border-bottom: 1px solid var(--rr-border-color);
+    flex-shrink: 0;
 }
 
 .rr-chat-header-top {
@@ -186,10 +188,12 @@
 }
 
 .rr-contact-form {
-    padding: 32px 24px;
+    padding: 24px;
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 16px;
+    overflow-y: auto;
+    flex: 1;
 }
 
 .rr-contact-form h4 {
@@ -244,6 +248,7 @@
     cursor: pointer;
     transition: all 0.2s;
     margin-top: 8px;
+    flex-shrink: 0;
 }
 
 .rr-contact-form button:hover {
@@ -262,7 +267,7 @@
 .rr-error-message {
     color: #e74c3c;
     font-size: 13px;
-    margin-top: -12px;
+    min-height: 18px;
 }
 
 .rr-chat-messages {
@@ -312,6 +317,14 @@
     border: 1px solid var(--rr-border-color);
 }
 
+.rr-message.rr-agent {
+    background: #dbeafe;
+    color: #1e40af;
+    align-self: flex-start;
+    border-bottom-left-radius: 4px;
+    border: 1px solid #3b82f6;
+}
+
 .rr-message.rr-typing {
     background: var(--rr-bot-message);
     padding: 16px;
@@ -357,6 +370,7 @@
     padding: 20px 24px 24px 24px;
     border-top: 1px solid var(--rr-border-color);
     background: var(--rr-bg-color);
+    flex-shrink: 0;
 }
 
 .rr-input-wrapper {
@@ -413,10 +427,22 @@
     fill: white;
 }
 
+#rr-agent-banner {
+    display: none;
+    background: #fef3c7;
+    border-bottom: 1px solid #fbbf24;
+    padding: 10px;
+    text-align: center;
+    font-size: 13px;
+    color: #92400e;
+    flex-shrink: 0;
+}
+
 @media (max-width: 480px) {
     #rr-chat-widget {
         width: 100vw;
         height: 100vh;
+        max-height: 100vh;
         bottom: 0;
         right: 0;
         border-radius: 0;
@@ -426,5 +452,9 @@
     #rr-chat-button {
         bottom: 20px;
         right: 20px;
+    }
+
+    .rr-contact-form {
+        padding: 20px;
     }
 }
