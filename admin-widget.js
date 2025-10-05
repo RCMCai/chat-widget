@@ -1,4 +1,4 @@
-// Rapid Reply Admin Widget - Supabase Realtime Version
+// Rapid Reply Admin Widget - Final Version
 (function() {
     'use strict';
 
@@ -6,15 +6,9 @@
     var userId = config.userId;
     var webhookUrl = config.webhookUrl || 'https://n8n.ie-manage.com/webhook/live-chat';
     
-    // Supabase config
-    var SUPABASE_URL = 'https://vwlqgwavzdohqkfaxgpt.supabase.co';
-    var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ3bHFnd2F2emRvaHFrZmF4Z3B0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTE3ODQ3MjksImV4cCI6MjA2NzM2MDcyOX0.LfAbG47R8ohZApapG2HUxprqA-vj3wZeovl7mIv1O_I';
-    
     var activeSessions = 0;
+    var pollInterval = null;
     var notificationSound = null;
-    var selectedSession = null;
-    var sessions = [];
-    var realtimeChannels = [];
 
     function initSound() {
         notificationSound = new Audio('data:audio/wav;base64,UklGRnoFAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoFAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBTGH0fPTgjMGHm7A7+OZURE');
@@ -214,7 +208,7 @@
                 display: flex;
             }
             
-            .rr-message.customer {
+            .rr-message.user {
                 justify-content: flex-start;
             }
             
@@ -230,7 +224,7 @@
                 line-height: 1.4;
             }
             
-            .rr-message.customer .rr-message-bubble {
+            .rr-message.user .rr-message-bubble {
                 background: white;
                 color: #1f2937;
                 box-shadow: 0 1px 2px rgba(0,0,0,0.05);
@@ -357,8 +351,6 @@
                 </div>
             </div>
         </div>
-
-        <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     `;
 
     document.body.insertAdjacentHTML('beforeend', html);
@@ -369,20 +361,11 @@
     var sessionsList = document.getElementById('rr-sessions-list');
     var chatArea = document.getElementById('rr-chat-area');
     var badge = document.getElementById('rr-admin-badge');
+    
+    var selectedSession = null;
+    var sessions = [];
 
     initSound();
-
-    // Wait for Supabase to load
-    function initSupabase() {
-        if (typeof supabase === 'undefined') {
-            setTimeout(initSupabase, 100);
-            return;
-        }
-        window.supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-        fetchSessions();
-        subscribeToSessions();
-    }
-    initSupabase();
 
     adminButton.addEventListener('click', function() {
         adminPanel.classList.toggle('open');
@@ -396,29 +379,13 @@
     });
 
     function fetchSessions() {
-        if (!window.supabaseClient) return;
-
-        window.supabaseClient
-            .from('sessionsrr')
-            .select('*')
-            .eq('userid', userId)
-            .eq('status', 'open')
-            .order('starttime', { ascending: false })
-            .then(function(result) {
-                if (result.data) {
+        fetch(webhookUrl + '?action=fetch-sessions&userId=' + userId)
+            .then(function(response) { return response.json(); })
+            .then(function(data) {
+                if (data.sessions) {
                     var oldCount = activeSessions;
-                    sessions = result.data.map(function(s) {
-                        return {
-                            sessionId: s.sessionid,
-                            clientName: s.clientname,
-                            clientEmail: s.clientemail,
-                            clientPhone: s.clientphone,
-                            startTime: s.starttime,
-                            status: s.status,
-                            messages: []
-                        };
-                    });
-                    activeSessions = sessions.length;
+                    sessions = data.sessions;
+                    activeSessions = sessions.filter(function(s) { return s.status === 'active'; }).length;
                     
                     if (activeSessions > oldCount && oldCount > 0) {
                         playNotification();
@@ -427,31 +394,10 @@
                     updateBadge();
                     renderSessions();
                 }
+            })
+            .catch(function(error) {
+                console.error('Error fetching sessions:', error);
             });
-    }
-
-    function subscribeToSessions() {
-        if (!window.supabaseClient) return;
-
-        // Listen for new sessions
-        var sessionChannel = window.supabaseClient
-            .channel('new-sessions')
-            .on(
-                'postgres_changes',
-                {
-                    event: 'INSERT',
-                    schema: 'public',
-                    table: 'sessionsrr',
-                    filter: 'userid=eq.' + userId
-                },
-                function(payload) {
-                    playNotification();
-                    fetchSessions();
-                }
-            )
-            .subscribe();
-
-        realtimeChannels.push(sessionChannel);
     }
 
     function updateBadge() {
@@ -495,15 +441,15 @@
                 div.className += ' active';
             }
             
-            var statusClass = session.status === 'open' ? 'rr-status-active' : '';
+            var statusClass = session.status === 'active' ? 'rr-status-active' : '';
             
             div.innerHTML = `
                 <div class="rr-session-name">${session.clientName || 'Unknown Client'}</div>
                 <div class="rr-session-email">${session.clientEmail || 'No email'}</div>
                 <div class="rr-session-phone">${session.clientPhone || 'No phone'}</div>
                 <div class="rr-session-meta">
-                    <span class="rr-status-badge ${statusClass}">${session.status || 'open'}</span>
-                    <span>${session.messages.length} messages</span>
+                    <span class="rr-status-badge ${statusClass}">${session.status}</span>
+                    <span>${session.messages ? session.messages.length : 0} messages</span>
                 </div>
             `;
             
@@ -517,70 +463,8 @@
 
     function selectSession(session) {
         selectedSession = session;
-        if (!selectedSession.messages) {
-            selectedSession.messages = [];
-        }
         renderSessions();
-        loadSessionMessages();
-    }
-
-    function loadSessionMessages() {
-        if (!window.supabaseClient || !selectedSession) return;
-
-        window.supabaseClient
-            .from('messagesrr')
-            .select('*')
-            .eq('sessionid', selectedSession.sessionId)
-            .order('timestamp', { ascending: true })
-            .then(function(result) {
-                if (result.data) {
-                    selectedSession.messages = result.data.map(function(m) {
-                        return {
-                            sender: m.sender,
-                            text: m.text,
-                            timestamp: m.timestamp
-                        };
-                    });
-                    renderChat();
-                    subscribeToSessionMessages();
-                }
-            });
-    }
-
-    function subscribeToSessionMessages() {
-        if (!window.supabaseClient || !selectedSession) return;
-
-        // Unsubscribe from previous session
-        realtimeChannels.forEach(function(ch) {
-            if (ch.topic.includes('session-messages')) {
-                ch.unsubscribe();
-            }
-        });
-
-        // Subscribe to new session messages
-        var msgChannel = window.supabaseClient
-            .channel('session-messages-' + selectedSession.sessionId)
-            .on(
-                'postgres_changes',
-                {
-                    event: 'INSERT',
-                    schema: 'public',
-                    table: 'messagesrr',
-                    filter: 'sessionid=eq.' + selectedSession.sessionId
-                },
-                function(payload) {
-                    var msg = payload.new;
-                    selectedSession.messages.push({
-                        sender: msg.sender,
-                        text: msg.text,
-                        timestamp: msg.timestamp
-                    });
-                    renderChat();
-                }
-            )
-            .subscribe();
-
-        realtimeChannels.push(msgChannel);
+        renderChat();
     }
 
     function renderChat() {
@@ -619,7 +503,7 @@
         if (selectedSession.messages && selectedSession.messages.length > 0) {
             selectedSession.messages.forEach(function(msg) {
                 var msgDiv = document.createElement('div');
-                msgDiv.className = 'rr-message ' + (msg.sender || 'customer');
+                msgDiv.className = 'rr-message ' + msg.sender;
                 
                 var label = msg.sender === 'agent' ? 'YOU' : msg.sender === 'bot' ? 'BOT' : 'CUSTOMER';
                 
@@ -650,29 +534,31 @@
                 timestamp: new Date().toISOString()
             };
             
-            // Write directly to Supabase
-            window.supabaseClient
-                .from('messagesrr')
-                .insert({
-                    userid: userId,
-                    sessionid: selectedSession.sessionId,
-                    sender: 'agent',
-                    text: message,
-                    timestamp: newMessage.timestamp,
-                    read: false
+            fetch(webhookUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'send-agent-message',
+                    userId: userId,
+                    sessionId: selectedSession.sessionId,
+                    message: newMessage
                 })
-                .then(function() {
-                    input.value = '';
-                })
-                .catch(function(error) {
-                    console.error('Error sending message:', error);
-                    alert('Failed to send message. Please try again.');
-                })
-                .finally(function() {
-                    sendBtn.disabled = false;
-                    input.disabled = false;
-                    input.focus();
-                });
+            })
+            .then(function(response) { return response.json(); })
+            .then(function(data) {
+                selectedSession.messages.push(newMessage);
+                input.value = '';
+                renderChat();
+            })
+            .catch(function(error) {
+                console.error('Error sending message:', error);
+                alert('Failed to send message');
+            })
+            .finally(function() {
+                sendBtn.disabled = false;
+                input.disabled = false;
+                input.focus();
+            });
         }
         
         sendBtn.addEventListener('click', sendMessage);
@@ -683,25 +569,23 @@
         closeBtn.addEventListener('click', function() {
             if (!confirm('Close this session?')) return;
             
-            window.supabaseClient
-                .from('sessionsrr')
-                .update({ status: 'closed' })
-                .eq('sessionid', selectedSession.sessionId)
-                .then(function() {
-                    selectedSession = null;
-                    fetchSessions();
-                    chatArea.innerHTML = `
-                        <div class="rr-empty-state">
-                            <svg class="rr-empty-icon" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
-                            </svg>
-                            <p>Select a session to start chatting</p>
-                        </div>
-                    `;
+            fetch(webhookUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'close-session',
+                    userId: userId,
+                    sessionId: selectedSession.sessionId
                 })
-                .catch(function(error) {
-                    console.error('Error closing session:', error);
-                });
+            })
+            .then(function(response) { return response.json(); })
+            .then(function(data) {
+                selectedSession = null;
+                fetchSessions();
+            })
+            .catch(function(error) {
+                console.error('Error closing session:', error);
+            });
         });
         
         input.focus();
@@ -711,4 +595,29 @@
         var date = new Date(timestamp);
         return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
     }
+
+    pollInterval = setInterval(function() {
+        if (adminPanel.classList.contains('open')) {
+            fetchSessions();
+        } else {
+            fetch(webhookUrl + '?action=fetch-sessions&userId=' + userId)
+                .then(function(response) { return response.json(); })
+                .then(function(data) {
+                    if (data.sessions) {
+                        var oldCount = activeSessions;
+                        sessions = data.sessions;
+                        activeSessions = sessions.filter(function(s) { return s.status === 'active'; }).length;
+                        
+                        if (activeSessions > oldCount) {
+                            playNotification();
+                        }
+                        
+                        updateBadge();
+                    }
+                })
+                .catch(function() {});
+        }
+    }, 20000);
+
+    fetchSessions();
 })();
