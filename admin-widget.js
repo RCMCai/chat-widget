@@ -6,13 +6,37 @@
     var userId = config.userId;
     var webhookUrl = config.webhookUrl || 'https://n8n.ie-manage.com/webhook/live-chat';
     
+    if (!userId) {
+        console.error('ERROR: userId not found. Set window.RAPID_REPLY_ADMIN_CONFIG before loading admin-widget.js');
+        return;
+    }
+
+    console.log('Admin widget initialized with userId:', userId);
+
+    var SUPABASE_URL = 'https://vwlqgwavzdohqkfaxgpt.supabase.co';
+    var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ3bHFnd2F2emRvaHFrZmF4Z3B0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTE3ODQ3MjksImV4cCI6MjA2NzM2MDcyOX0.LfAbG47R8ohZApapG2HUxprqA-vj3wZeovl7mIv1O_I';
+    
     var activeSessions = 0;
-    var pollInterval = null;
     var notificationSound = null;
+    var selectedSession = null;
+    var sessions = [];
+    var realtimeChannels = [];
 
     function initSound() {
         notificationSound = new Audio('data:audio/wav;base64,UklGRnoFAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoFAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBTGH0fPTgjMGHm7A7+OZURE');
     }
+
+    var script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
+    script.onload = function() {
+        if (typeof supabase !== 'undefined') {
+            window.supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+            console.log('Supabase loaded');
+            fetchSessions();
+            subscribeToSessions();
+        }
+    };
+    document.head.appendChild(script);
 
     var html = `
         <style>
@@ -36,12 +60,11 @@
                 align-items: center;
                 justify-content: center;
                 z-index: 9998;
-                transition: transform 0.2s, box-shadow 0.2s;
+                transition: transform 0.2s;
             }
             
             #rr-admin-button:hover {
                 transform: scale(1.1);
-                box-shadow: 0 6px 20px rgba(0,0,0,0.3);
             }
             
             #rr-admin-button svg {
@@ -113,7 +136,6 @@
                 padding: 0;
                 width: 30px;
                 height: 30px;
-                line-height: 30px;
             }
             
             .rr-admin-body {
@@ -164,22 +186,11 @@
                 margin-bottom: 8px;
             }
             
-            .rr-session-meta {
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                font-size: 11px;
-                color: #9ca3af;
-            }
-            
             .rr-status-badge {
                 padding: 2px 8px;
                 border-radius: 12px;
                 font-size: 10px;
                 font-weight: 600;
-            }
-            
-            .rr-status-active {
                 background: #d1fae5;
                 color: #065f46;
             }
@@ -240,19 +251,6 @@
                 color: #6b21a8;
             }
             
-            .rr-message-label {
-                font-size: 10px;
-                font-weight: 600;
-                margin-bottom: 4px;
-                opacity: 0.8;
-            }
-            
-            .rr-message-time {
-                font-size: 11px;
-                margin-top: 4px;
-                opacity: 0.7;
-            }
-            
             .rr-input-area {
                 padding: 16px 20px;
                 border-top: 1px solid #e5e7eb;
@@ -283,16 +281,10 @@
                 border-radius: 8px;
                 font-weight: 600;
                 cursor: pointer;
-                transition: background 0.2s;
             }
             
             .rr-send-btn:hover {
                 background: #2563eb;
-            }
-            
-            .rr-send-btn:disabled {
-                opacity: 0.5;
-                cursor: not-allowed;
             }
             
             .rr-empty-state {
@@ -303,12 +295,6 @@
                 color: #9ca3af;
                 flex-direction: column;
                 gap: 12px;
-            }
-            
-            .rr-empty-icon {
-                width: 64px;
-                height: 64px;
-                opacity: 0.3;
             }
             
             .rr-close-session-btn {
@@ -325,7 +311,7 @@
         </style>
 
         <div id="rr-admin-widget">
-            <button id="rr-admin-button" aria-label="Open admin dashboard">
+            <button id="rr-admin-button">
                 <svg viewBox="0 0 24 24">
                     <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/>
                 </svg>
@@ -335,16 +321,13 @@
             <div id="rr-admin-panel">
                 <div class="rr-admin-header">
                     <h3>Live Support Dashboard</h3>
-                    <button class="rr-admin-close" id="rr-admin-close">×</button>
+                    <button class="rr-admin-close" id="rr-admin-close">&times;</button>
                 </div>
                 
                 <div class="rr-admin-body">
                     <div class="rr-sessions-list" id="rr-sessions-list"></div>
                     <div class="rr-chat-area" id="rr-chat-area">
                         <div class="rr-empty-state">
-                            <svg class="rr-empty-icon" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
-                            </svg>
                             <p>Select a session to start chatting</p>
                         </div>
                     </div>
@@ -361,9 +344,6 @@
     var sessionsList = document.getElementById('rr-sessions-list');
     var chatArea = document.getElementById('rr-chat-area');
     var badge = document.getElementById('rr-admin-badge');
-    
-    var selectedSession = null;
-    var sessions = [];
 
     initSound();
 
@@ -379,32 +359,57 @@
     });
 
     function fetchSessions() {
-        fetch(webhookUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                action: 'fetch-sessions',
-                userId: userId
-            })
-        })
-            .then(function(response) { return response.json(); })
-            .then(function(data) {
-                if (data.sessions) {
-                    var oldCount = activeSessions;
-                    sessions = data.sessions;
+        if (!window.supabaseClient) return;
+
+        window.supabaseClient
+            .from('sessionsrr')
+            .select('*')
+            .eq('userid', userId)
+            .eq('status', 'open')
+            .order('starttime', { ascending: false })
+            .then(function(result) {
+                if (result.data) {
+                    sessions = result.data.map(function(s) {
+                        return {
+                            sessionId: s.sessionid,
+                            clientName: s.clientname,
+                            clientEmail: s.clientemail,
+                            clientPhone: s.clientphone,
+                            startTime: s.starttime,
+                            status: s.status,
+                            messages: []
+                        };
+                    });
+                    
                     activeSessions = sessions.length;
-                    
-                    if (activeSessions > oldCount && oldCount > 0) {
-                        playNotification();
-                    }
-                    
                     updateBadge();
                     renderSessions();
                 }
-            })
-            .catch(function(error) {
-                console.error('Error fetching sessions:', error);
             });
+    }
+
+    function subscribeToSessions() {
+        if (!window.supabaseClient) return;
+
+        var sessionChannel = window.supabaseClient
+            .channel('new-sessions')
+            .on(
+                'postgres_changes',
+                {
+                    event: 'INSERT',
+                    schema: 'public',
+                    table: 'sessionsrr',
+                    filter: 'userid=eq.' + userId
+                },
+                function(payload) {
+                    console.log('New session:', payload);
+                    playNotification();
+                    fetchSessions();
+                }
+            )
+            .subscribe();
+
+        realtimeChannels.push(sessionChannel);
     }
 
     function updateBadge() {
@@ -423,8 +428,7 @@
         
         if ('Notification' in window && Notification.permission === 'granted') {
             new Notification('New Support Request', {
-                body: 'A customer is requesting live agent support',
-                icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%233b82f6"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>'
+                body: 'A customer is requesting live agent support'
             });
         }
     }
@@ -442,27 +446,17 @@
         }
         
         sessions.forEach(function(session) {
-            // Initialize messages array if it doesn't exist
-            if (!session.messages) {
-                session.messages = [];
-            }
-            
             var div = document.createElement('div');
             div.className = 'rr-session-item';
             if (selectedSession && selectedSession.sessionId === session.sessionId) {
                 div.className += ' active';
             }
             
-            var statusClass = session.status === 'open' ? 'rr-status-active' : '';
-            
             div.innerHTML = `
-                <div class="rr-session-name">${session.clientName || 'Unknown Client'}</div>
+                <div class="rr-session-name">${session.clientName || 'Unknown'}</div>
                 <div class="rr-session-email">${session.clientEmail || 'No email'}</div>
                 <div class="rr-session-phone">${session.clientPhone || 'No phone'}</div>
-                <div class="rr-session-meta">
-                    <span class="rr-status-badge ${statusClass}">${session.status || 'open'}</span>
-                    <span>${session.messages.length} messages</span>
-                </div>
+                <span class="rr-status-badge">Open</span>
             `;
             
             div.addEventListener('click', function() {
@@ -475,31 +469,79 @@
 
     function selectSession(session) {
         selectedSession = session;
-        if (!selectedSession.messages) {
-            selectedSession.messages = [];
-        }
         renderSessions();
-        renderChat();
+        loadSessionMessages();
+    }
+
+    function loadSessionMessages() {
+        if (!window.supabaseClient || !selectedSession) return;
+
+        window.supabaseClient
+            .from('messagesrr')
+            .select('*')
+            .eq('sessionid', selectedSession.sessionId)
+            .order('timestamp', { ascending: true })
+            .then(function(result) {
+                if (result.data) {
+                    selectedSession.messages = result.data.map(function(m) {
+                        return {
+                            sender: m.sender,
+                            text: m.text,
+                            timestamp: m.timestamp
+                        };
+                    });
+                    renderChat();
+                    subscribeToSessionMessages();
+                }
+            });
+    }
+
+    function subscribeToSessionMessages() {
+        if (!window.supabaseClient || !selectedSession) return;
+
+        realtimeChannels.forEach(function(ch) {
+            if (ch.topic.includes('session-messages')) {
+                ch.unsubscribe();
+            }
+        });
+
+        var msgChannel = window.supabaseClient
+            .channel('session-messages-' + selectedSession.sessionId)
+            .on(
+                'postgres_changes',
+                {
+                    event: 'INSERT',
+                    schema: 'public',
+                    table: 'messagesrr',
+                    filter: 'sessionid=eq.' + selectedSession.sessionId
+                },
+                function(payload) {
+                    console.log('New message:', payload);
+                    var msg = payload.new;
+                    selectedSession.messages.push({
+                        sender: msg.sender,
+                        text: msg.text,
+                        timestamp: msg.timestamp
+                    });
+                    renderChat();
+                }
+            )
+            .subscribe();
+
+        realtimeChannels.push(msgChannel);
     }
 
     function renderChat() {
         if (!selectedSession) {
-            chatArea.innerHTML = `
-                <div class="rr-empty-state">
-                    <svg class="rr-empty-icon" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
-                    </svg>
-                    <p>Select a session to start chatting</p>
-                </div>
-            `;
+            chatArea.innerHTML = '<div class="rr-empty-state"><p>Select a session</p></div>';
             return;
         }
         
         chatArea.innerHTML = `
             <div class="rr-chat-header">
-                <div style="font-weight: 600; font-size: 16px;">${selectedSession.clientName || 'Client'}</div>
+                <div style="font-weight: 600;">${selectedSession.clientName || 'Client'}</div>
                 <div style="font-size: 13px; color: #6b7280; margin-top: 2px;">
-                    ${selectedSession.clientEmail || 'No email'} • ${selectedSession.clientPhone || 'No phone'}
+                    ${selectedSession.clientEmail || ''} • ${selectedSession.clientPhone || ''}
                 </div>
                 <button class="rr-close-session-btn" id="rr-close-session">Close Session</button>
             </div>
@@ -524,9 +566,8 @@
                 
                 msgDiv.innerHTML = `
                     <div class="rr-message-bubble">
-                        <div class="rr-message-label">${label}</div>
+                        <div style="font-size: 10px; font-weight: 600; margin-bottom: 4px;">${label}</div>
                         <div>${msg.text}</div>
-                        <div class="rr-message-time">${formatTime(msg.timestamp)}</div>
                     </div>
                 `;
                 
@@ -543,45 +584,28 @@
             sendBtn.disabled = true;
             input.disabled = true;
             
-            var newMessage = {
-                sender: 'agent',
-                text: message,
-                timestamp: new Date().toISOString()
-            };
-            
-            fetch(webhookUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    action: 'send-agent-message',
-                    userId: userId,
-                    sessionId: selectedSession.sessionId,
-                    message: newMessage
+            window.supabaseClient
+                .from('messagesrr')
+                .insert({
+                    userid: userId,
+                    sessionid: selectedSession.sessionId,
+                    sender: 'agent',
+                    text: message,
+                    timestamp: new Date().toISOString(),
+                    read: false
                 })
-            })
-            .then(function(response) { 
-                if (!response.ok) {
-                    throw new Error('Network response was not ok');
-                }
-                return response.json(); 
-            })
-            .then(function(data) {
-                if (!selectedSession.messages) {
-                    selectedSession.messages = [];
-                }
-                selectedSession.messages.push(newMessage);
-                input.value = '';
-                renderChat();
-            })
-            .catch(function(error) {
-                console.error('Error sending message:', error);
-                alert('Failed to send message. Please try again.');
-            })
-            .finally(function() {
-                sendBtn.disabled = false;
-                input.disabled = false;
-                input.focus();
-            });
+                .then(function() {
+                    input.value = '';
+                })
+                .catch(function(error) {
+                    console.error('Error:', error);
+                    alert('Failed to send message');
+                })
+                .finally(function() {
+                    sendBtn.disabled = false;
+                    input.disabled = false;
+                    input.focus();
+                });
         }
         
         sendBtn.addEventListener('click', sendMessage);
@@ -592,36 +616,20 @@
         closeBtn.addEventListener('click', function() {
             if (!confirm('Close this session?')) return;
             
-            fetch(webhookUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    action: 'close-session',
-                    userId: userId,
-                    sessionId: selectedSession.sessionId
+            window.supabaseClient
+                .from('sessionsrr')
+                .update({ status: 'closed' })
+                .eq('sessionid', selectedSession.sessionId)
+                .then(function() {
+                    selectedSession = null;
+                    fetchSessions();
+                    chatArea.innerHTML = '<div class="rr-empty-state"><p>Select a session</p></div>';
                 })
-            })
-            .then(function(response) { return response.json(); })
-            .then(function(data) {
-                selectedSession = null;
-                fetchSessions();
-            })
-            .catch(function(error) {
-                console.error('Error closing session:', error);
-            });
+                .catch(function(error) {
+                    console.error('Error:', error);
+                });
         });
         
         input.focus();
     }
-
-    function formatTime(timestamp) {
-        var date = new Date(timestamp);
-        return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-    }
-
-    // Start polling every 5 seconds
-    pollInterval = setInterval(fetchSessions, 12000);
-    
-    // Initial fetch
-    fetchSessions();
 })();
