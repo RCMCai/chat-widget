@@ -1,50 +1,68 @@
-// Rapid Reply Chat Widget - Fixed Version
+// Rapid Reply Chat Widget - Final Version
 (function() {
     'use strict';
 
     var config = window.RAPID_REPLY_CONFIG || {};
     var userId = config.userId;
     var webhookUrl = config.webhookUrl || 'https://n8n.ie-manage.com/webhook/live-chat';
-    var theme = config.theme || 'blue';
-    var logoUrl = config.logoUrl || '';
-    var companyInitials = config.companyInitials || 'RR';
-    var companyName = config.companyName || 'Support';
+
+    if (!userId) {
+        console.error('ERROR: userId not found. Set window.RAPID_REPLY_CONFIG before loading widget.js');
+        return;
+    }
+
+    console.log('Widget initialized with userId:', userId);
+
+    var SUPABASE_URL = 'https://vwlqgwavzdohqkfaxgpt.supabase.co';
+    var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ3bHFnd2F2emRvaHFrZmF4Z3B0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTE3ODQ3MjksImV4cCI6MjA2NzM2MDcyOX0.LfAbG47R8ohZApapG2HUxprqA-vj3wZeovl7mIv1O_I';
 
     var SESSION_STORAGE_KEY = 'chatSessionId';
     var sessionId = null;
-    var isTyping = false;
     var isAgentMode = false;
-    var pollInterval = null;
     var conversationHistory = [];
     var clientEmail = '';
     var clientPhone = '';
     var clientName = '';
     var businessHours = null;
     var canTransferToAgent = false;
+    var realtimeChannel = null;
 
-    var html = `
+    var script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
+    script.onload = function() {
+        if (typeof supabase !== 'undefined') {
+            window.supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+            console.log('Supabase loaded');
+        }
+    };
+    document.head.appendChild(script);
+
+    var link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = 'https://rcmcai.github.io/chat-widget/widget.css';
+    document.head.appendChild(link);
+
+    var widgetDiv = document.createElement('div');
+    widgetDiv.innerHTML = `
         <button id="rr-chat-button" aria-label="Open chat">
-            <svg viewBox="0 0 24 24" id="rr-default-icon">
+            <svg viewBox="0 0 24 24">
                 <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
             </svg>
         </button>
 
-        <div id="rr-chat-widget" class="rr-theme-${theme}">
+        <div id="rr-chat-widget">
             <div class="rr-chat-header">
                 <div class="rr-chat-header-top">
                     <div class="rr-chat-header-title">
-                        <div class="rr-chat-avatar" id="rr-header-avatar">
-                            <span id="rr-avatar-initials">${companyInitials}</span>
+                        <div class="rr-chat-avatar">
+                            <span>RR</span>
                         </div>
                         <div class="rr-chat-header-text">
-                            <h3>${companyName}</h3>
+                            <h3>Support</h3>
                             <p id="rr-chat-status"><span class="rr-status-dot"></span>Online now</p>
                         </div>
                     </div>
-                    <button class="rr-close-button" id="rr-close-chat" aria-label="Close chat">&times;</button>
-                </div>
-                <div id="rr-powered-by" style="text-align: center; padding: 8px; font-size: 11px; color: rgba(255,255,255,0.7); border-top: 1px solid rgba(255,255,255,0.1);">
-                    Powered by RapidReply
+                    <button class="rr-close-button" id="rr-close-chat">&times;</button>
                 </div>
             </div>
 
@@ -69,19 +87,14 @@
                 <button id="rr-start-chat">Start Conversation</button>
             </div>
 
-            <div id="rr-agent-banner" style="display: none; background: #fef3c7; border-top: 2px solid #fbbf24; padding: 10px; text-align: center; font-size: 13px; color: #92400e;">
-                Connecting you to a live agent...
-            </div>
+            <div id="rr-agent-banner" style="display: none;"></div>
 
             <div class="rr-chat-messages" id="rr-chat-messages" style="display: none;"></div>
             
             <div class="rr-chat-input" id="rr-chat-input" style="display: none;">
-                <button id="rr-request-agent" class="rr-agent-button" style="display: none; width: 100%; padding: 10px; margin-bottom: 10px; background: white; color: #3b82f6; border: 2px solid #3b82f6; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 14px;">
-                    Talk to Live Agent
-                </button>
                 <div class="rr-input-wrapper">
                     <input type="text" id="rr-message-input" placeholder="Type your message...">
-                    <button class="rr-send-button" id="rr-send-button" aria-label="Send message">
+                    <button class="rr-send-button" id="rr-send-button">
                         <svg viewBox="0 0 24 24">
                             <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
                         </svg>
@@ -90,8 +103,7 @@
             </div>
         </div>
     `;
-
-    document.body.insertAdjacentHTML('beforeend', html);
+    document.body.appendChild(widgetDiv);
 
     var chatButton = document.getElementById('rr-chat-button');
     var chatWidget = document.getElementById('rr-chat-widget');
@@ -106,23 +118,8 @@
     var chatInput = document.getElementById('rr-chat-input');
     var messageInput = document.getElementById('rr-message-input');
     var sendButton = document.getElementById('rr-send-button');
-    var requestAgentBtn = document.getElementById('rr-request-agent');
     var agentBanner = document.getElementById('rr-agent-banner');
     var chatStatus = document.getElementById('rr-chat-status');
-
-    if (logoUrl) {
-        var buttonImg = document.createElement('img');
-        buttonImg.src = logoUrl;
-        buttonImg.alt = 'Chat';
-        document.getElementById('rr-default-icon').style.display = 'none';
-        chatButton.appendChild(buttonImg);
-
-        var headerImg = document.createElement('img');
-        headerImg.src = logoUrl;
-        headerImg.alt = companyName;
-        document.getElementById('rr-avatar-initials').style.display = 'none';
-        document.getElementById('rr-header-avatar').appendChild(headerImg);
-    }
 
     chatButton.addEventListener('click', function() {
         chatWidget.classList.add('rr-open');
@@ -138,7 +135,10 @@
     closeChat.addEventListener('click', function() {
         chatWidget.classList.remove('rr-open');
         chatButton.style.display = 'flex';
-        stopPolling();
+        if (realtimeChannel) {
+            realtimeChannel.unsubscribe();
+            realtimeChannel = null;
+        }
     });
 
     function validateEmail(email) {
@@ -165,23 +165,6 @@
         var endMinutes = parseInt(endParts[0]) * 60 + parseInt(endParts[1]);
         
         return currentTime >= startMinutes && currentTime <= endMinutes;
-    }
-
-    function getBusinessHoursMessage() {
-        if (!businessHours) return '';
-        
-        var message = 'Our support hours are: ';
-        var days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
-        var hours = [];
-        
-        days.forEach(function(day) {
-            var dayHours = businessHours[day];
-            if (dayHours && !dayHours.closed) {
-                hours.push(day.charAt(0).toUpperCase() + day.slice(1) + ': ' + dayHours.start + ' - ' + dayHours.end);
-            }
-        });
-        
-        return message + hours.join(', ');
     }
 
     startChatBtn.addEventListener('click', function() {
@@ -225,7 +208,10 @@
                 timestamp: Date.now()
             })
         })
-        .then(function(response) { return response.json(); })
+        .then(function(response) {
+            if (!response.ok) throw new Error('Server error');
+            return response.json();
+        })
         .then(function(data) {
             if (data.sessionId) {
                 sessionId = data.sessionId;
@@ -242,7 +228,7 @@
                     addMessage(data.welcomeMessage, 'bot');
                 }
             } else {
-                throw new Error('No session ID received');
+                throw new Error('No session ID');
             }
         })
         .catch(function(error) {
@@ -263,19 +249,7 @@
     function addMessage(text, sender) {
         var messageDiv = document.createElement('div');
         messageDiv.className = 'rr-message rr-' + sender;
-        
-        if (sender === 'agent') {
-            var agentLabel = document.createElement('div');
-            agentLabel.style.fontSize = '10px';
-            agentLabel.style.fontWeight = 'bold';
-            agentLabel.style.marginBottom = '4px';
-            agentLabel.style.opacity = '0.9';
-            agentLabel.textContent = 'LIVE AGENT';
-            messageDiv.appendChild(agentLabel);
-        }
-        
-        var textNode = document.createTextNode(text);
-        messageDiv.appendChild(textNode);
+        messageDiv.textContent = text;
         
         chatMessages.appendChild(messageDiv);
         chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -287,24 +261,6 @@
         });
     }
 
-    function showTyping() {
-        if (isTyping) return;
-        isTyping = true;
-        
-        var typingDiv = document.createElement('div');
-        typingDiv.className = 'rr-message rr-bot rr-typing';
-        typingDiv.id = 'rr-typing-indicator';
-        typingDiv.innerHTML = '<div class="rr-typing-indicator"><span></span><span></span><span></span></div>';
-        chatMessages.appendChild(typingDiv);
-        chatMessages.scrollTop = chatMessages.scrollHeight;
-    }
-
-    function hideTyping() {
-        isTyping = false;
-        var typingDiv = document.getElementById('rr-typing-indicator');
-        if (typingDiv) typingDiv.remove();
-    }
-
     function sendMessage() {
         var message = messageInput.value.trim();
         if (!message || !sessionId) return;
@@ -314,106 +270,86 @@
         sendButton.disabled = true;
         messageInput.disabled = true;
 
-        if (!isAgentMode) {
-            showTyping();
-        }
+        if (isAgentMode) {
+            if (!window.supabaseClient) {
+                console.error('Supabase not loaded');
+                sendButton.disabled = false;
+                messageInput.disabled = false;
+                return;
+            }
 
-        fetch(webhookUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                action: 'message',
-                sessionId: sessionId,
-                message: message,
-                userId: userId,
-                agentMode: isAgentMode,
-                clientName: clientName,
-                clientEmail: clientEmail,
-                clientPhone: clientPhone,
-                timestamp: Date.now()
+            window.supabaseClient
+                .from('messagesrr')
+                .insert({
+                    userid: userId,
+                    sessionid: sessionId,
+                    sender: 'customer',
+                    text: message,
+                    timestamp: new Date().toISOString(),
+                    read: false
+                })
+                .then(function() {
+                    sendButton.disabled = false;
+                    messageInput.disabled = false;
+                    messageInput.focus();
+                })
+                .catch(function(error) {
+                    console.error('Error:', error);
+                    sendButton.disabled = false;
+                    messageInput.disabled = false;
+                });
+        } else {
+            fetch(webhookUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'message',
+                    sessionId: sessionId,
+                    message: message,
+                    userId: userId,
+                    agentMode: false,
+                    clientName: clientName,
+                    clientEmail: clientEmail,
+                    clientPhone: clientPhone,
+                    timestamp: Date.now()
+                })
             })
-        })
-        .then(function(response) { return response.json(); })
-        .then(function(data) {
-            hideTyping();
-            
-            console.log("=== RECEIVED FROM N8N ===");
-            console.log("Full data:", data);
-            console.log("data.reply:", data.reply);
-            console.log("data.triggerHandoff:", data.triggerHandoff);
-            console.log("typeof triggerHandoff:", typeof data.triggerHandoff);
-            console.log("isAgentMode:", isAgentMode);
-            console.log("canTransferToAgent:", canTransferToAgent);
-            
-            if (!isAgentMode && data.reply) {
-                addMessage(data.reply, 'bot');
-                
-                console.log("Checking if triggerHandoff === true...");
-                if (data.triggerHandoff === true) {
-                    console.log("✅ HANDOFF TRIGGERED!");
-                    if (canTransferToAgent) {
-                        console.log("✅ Calling requestLiveAgent()");
-                        requestLiveAgent();
-                    } else {
-                        console.log("❌ Cannot transfer - outside business hours");
-                        var hoursMsg = getBusinessHoursMessage();
-                        addMessage("I'd be happy to connect you with a live agent, but our support team is currently offline. " + hoursMsg, 'bot');
-                    }
-                } else {
-                    console.log("❌ triggerHandoff is NOT true. Value:", data.triggerHandoff);
+            .then(function(response) { return response.json(); })
+            .then(function(data) {
+                if (data.reply) {
+                    addMessage(data.reply, 'bot');
                 }
-            } else {
-                console.log("Skipped - isAgentMode:", isAgentMode, "has reply:", !!data.reply);
-            }
-        })
-        .catch(function(error) {
-            console.error('Error:', error);
-            hideTyping();
-            if (!isAgentMode) {
-                addMessage('Sorry, something went wrong. Please try again.', 'bot');
-            }
-        })
-        .finally(function() {
-            sendButton.disabled = false;
-            messageInput.disabled = false;
-            messageInput.focus();
-        });
+                
+                if (data.triggerHandoff === true) {
+                    if (canTransferToAgent) {
+                        requestLiveAgent();
+                    }
+                }
+            })
+            .catch(function(error) {
+                console.error('Error:', error);
+                addMessage('Sorry, something went wrong.', 'bot');
+            })
+            .finally(function() {
+                sendButton.disabled = false;
+                messageInput.disabled = false;
+                messageInput.focus();
+            });
+        }
     }
 
     function requestLiveAgent() {
-        console.log("=== INSIDE requestLiveAgent() ===");
+        if (isAgentMode) return;
+        if (!canTransferToAgent) return;
         
-        if (isAgentMode) {
-            console.log("Already in agent mode, returning");
-            return;
-        }
+        console.log('=== HANDOFF ===');
+        console.log('userId:', userId);
+        console.log('sessionId:', sessionId);
         
-        if (!canTransferToAgent) {
-            console.log("Cannot transfer - outside business hours");
-            var hoursMsg = getBusinessHoursMessage();
-            addMessage("Our support team is currently offline. " + hoursMsg + " Please try again during business hours!", 'bot');
-            return;
-        }
-        
-        console.log("Setting isAgentMode = true");
         isAgentMode = true;
         agentBanner.style.display = 'block';
-        chatStatus.innerHTML = '<span class="rr-status-dot" style="background: #fbbf24;"></span>Connecting to agent...';
-        requestAgentBtn.disabled = true;
-        requestAgentBtn.style.display = 'none';
-
-        console.log("Sending handoff request to n8n...");
-        console.log("Request payload:", {
-            action: 'handoff',
-            userId: userId,
-            sessionId: sessionId,
-            clientName: clientName,
-            clientEmail: clientEmail,
-            clientPhone: clientPhone,
-            conversationHistory: conversationHistory,
-            timestamp: Date.now(),
-            status: 'open'
-        });
+        agentBanner.textContent = 'Connecting you to a live agent...';
+        chatStatus.innerHTML = '<span class="rr-status-dot" style="background: #fbbf24;"></span>Connecting...';
 
         fetch(webhookUrl, {
             method: 'POST',
@@ -430,83 +366,53 @@
                 status: 'open'
             })
         })
-        .then(function(response) { 
-            console.log("Handoff response status:", response.status);
-            return response.json(); 
-        })
+        .then(function(response) { return response.json(); })
         .then(function(data) {
-            console.log("Handoff response data:", data);
+            console.log('Handoff complete:', data);
             addMessage('An agent will be with you shortly...', 'bot');
-            startPollingForAgentMessages();
+            subscribeToAgentMessages();
         })
         .catch(function(error) {
-            console.error('Error requesting agent:', error);
-            addMessage('Could not connect to agent. Please try again.', 'bot');
+            console.error('Handoff error:', error);
+            addMessage('Could not connect to agent.', 'bot');
             isAgentMode = false;
             agentBanner.style.display = 'none';
-            chatStatus.innerHTML = '<span class="rr-status-dot"></span>Online now';
         });
     }
 
-    function startPollingForAgentMessages() {
-        if (pollInterval) return;
-        
-        pollInterval = setInterval(function() {
-            fetch(webhookUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    action: 'poll',
-                    userId: userId,
-                    sessionId: sessionId
-                })
-            })
-                .then(function(response) { return response.json(); })
-                .then(function(data) {
-                    if (data.messages && Array.isArray(data.messages)) {
-                        data.messages.forEach(function(msg) {
-                            var exists = conversationHistory.find(function(m) {
-                                return m.timestamp === msg.timestamp;
-                            });
-                            
-                            if (!exists && msg.sender === 'agent') {
-                                addMessage(msg.text, 'agent');
-                                
-                                if (chatStatus.textContent.includes('Connecting')) {
-                                    chatStatus.innerHTML = '<span class="rr-status-dot" style="background: #10b981;"></span>Live Agent';
-                                    agentBanner.innerHTML = 'Connected to live agent';
-                                    agentBanner.style.background = '#d1fae5';
-                                    agentBanner.style.borderColor = '#10b981';
-                                    agentBanner.style.color = '#065f46';
-                                }
-                            }
-                        });
-                    }
-                    
-                    if (data.status === 'closed') {
-                        stopPolling();
-                        addMessage('This session has been closed. Thank you!', 'bot');
-                        isAgentMode = false;
-                        agentBanner.style.display = 'none';
-                        chatStatus.innerHTML = '<span class="rr-status-dot"></span>Online now';
-                    }
-                })
-                .catch(function(error) {
-                    console.error('Error polling for messages:', error);
-                });
-        }, 12000);
-    }
+    function subscribeToAgentMessages() {
+        if (!window.supabaseClient || realtimeChannel) return;
 
-    function stopPolling() {
-        if (pollInterval) {
-            clearInterval(pollInterval);
-            pollInterval = null;
-        }
+        console.log('Subscribing to messages for session:', sessionId);
+
+        realtimeChannel = window.supabaseClient
+            .channel('agent-' + sessionId)
+            .on(
+                'postgres_changes',
+                {
+                    event: 'INSERT',
+                    schema: 'public',
+                    table: 'messagesrr',
+                    filter: 'sessionid=eq.' + sessionId
+                },
+                function(payload) {
+                    console.log('Message received:', payload);
+                    var msg = payload.new;
+                    if (msg.sender === 'agent') {
+                        addMessage(msg.text, 'agent');
+                        
+                        chatStatus.innerHTML = '<span class="rr-status-dot" style="background: #10b981;"></span>Live Agent';
+                        agentBanner.textContent = 'Connected to live agent';
+                        agentBanner.style.background = '#d1fae5';
+                        agentBanner.style.color = '#065f46';
+                    }
+                }
+            )
+            .subscribe();
     }
 
     sendButton.addEventListener('click', sendMessage);
     messageInput.addEventListener('keypress', function(e) {
         if (e.key === 'Enter') sendMessage();
     });
-    requestAgentBtn.addEventListener('click', requestLiveAgent);
 })();
